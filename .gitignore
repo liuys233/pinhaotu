@@ -1,0 +1,23 @@
+# 编辑器 / 工具内部目录
+.trae/
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 改代码时留的临时备份
+*.bak
+
+# 运行时数据：批次账本
+ledger.json
+
+# 测试跑出来的截图
+tests/_shots/
+
+# 拼图导出产物：体积大，且每批都不同，属于用户数据
+TILE_*
+*.manifest.json
+*.tif
+*.tiff
