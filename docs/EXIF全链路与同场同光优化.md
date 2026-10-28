@@ -25,7 +25,7 @@
 
 ### P1 源图不是 JPEG 时，EXIF 全丢（核心缺口）
 
-[tiler_core.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py#L172-L183) 的 `extract_exif_app1()` 第一行就判 JPEG 魔数 `\xff\xd8`，非 JPEG 直接返回 `None`。
+[tiler_core.py](../tiler_core.py#L172-L183) 的 `extract_exif_app1()` 第一行就判 JPEG 魔数 `\xff\xd8`，非 JPEG 直接返回 `None`。
 
 实测：
 
@@ -39,17 +39,17 @@ e2.tobytes() 长度: 262
 
 ### P2 只有 JPEG 输出会写 EXIF
 
-[split_canvas](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py#L696-L711) 里 `keep_exif` 分支写死 `if outfmt == "jpeg"`。用户把切回格式选成 `tiff` / `png` / `original`（原图是 TIFF 时）→ **EXIF 同样丢失，且无告警**。
+[split_canvas](../tiler_core.py#L696-L711) 里 `keep_exif` 分支写死 `if outfmt == "jpeg"`。用户把切回格式选成 `tiff` / `png` / `original`（原图是 TIFF 时）→ **EXIF 同样丢失，且无告警**。
 
 ### P3 没有拍摄时间，无法判断"同场同光"
 
-`SourceImage`（[tiler_core.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py#L270-L291)）只存尺寸和 sha256，没有拍摄时间。
-照片列表（[tiler_gui.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py#L274-L279)）只有「文件 / 尺寸」两列。
+`SourceImage`（[tiler_core.py](../tiler_core.py#L270-L291)）只存尺寸和 sha256，没有拍摄时间。
+照片列表（[tiler_gui.py](../tiler_gui.py#L274-L279)）只有「文件 / 尺寸」两列。
 排版结果只显示画布尺寸和填充率，**看不出这张画布把哪几个时间点的照片混在了一起**。
 
 ### P4 机型识别只靠像素尺寸
 
-`detect_camera()`（[tiler_core.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py#L119-L125)）按 `w/h` 猜，镜头裁切或机内裁切后会识别失败。EXIF 里本来就有 `Model`(0x0110)，现成没用。
+`detect_camera()`（[tiler_core.py](../tiler_core.py#L119-L125)）按 `w/h` 猜，镜头裁切或机内裁切后会识别失败。EXIF 里本来就有 `Model`(0x0110)，现成没用。
 
 ---
 
@@ -73,8 +73,8 @@ e2.tobytes() 长度: 262
 
 保留现有 JPEG 通道**完全不动**（它靠手写字节操作，能保住厂商私有 MakerNote，已被生产验证）：
 
-- 保留 [extract_exif_app1](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py#L172-L183) + [_strip_thumb_normalize](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py#L186-L221)
-- 保留 [inject_exif_into_jpeg](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py#L229-L246) 的 APP1 段注入逻辑
+- 保留 [extract_exif_app1](../tiler_core.py#L172-L183) + [_strip_thumb_normalize](../tiler_core.py#L186-L221)
+- 保留 [inject_exif_into_jpeg](../tiler_core.py#L229-L246) 的 APP1 段注入逻辑
 
 新增一条**非 JPEG 通道**（Pillow 原生）：
 
@@ -92,7 +92,7 @@ e2.tobytes() 长度: 262
 
 ### 二、`tiler_core.py`：manifest 带上 EXIF 与拍摄时间
 
-用户的实际工作流里，原图大概率会被归档 / 改名 / 移动。当前切回时是从 `source` 路径**重读**源图取 EXIF（[tiler_core.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py#L713-L723)），源图一旦不在，EXIF 就没了。
+用户的实际工作流里，原图大概率会被归档 / 改名 / 移动。当前切回时是从 `source` 路径**重读**源图取 EXIF（[tiler_core.py](../tiler_core.py#L713-L723)），源图一旦不在，EXIF 就没了。
 
 - `SourceImage` 增加字段：`shot_time: str`、`model: str`、`exif_b64: str`（在导入照片时一次提取并缓存）。
 - `build_manifest()` 的每个 item 增加 `shotTime` / `model` / `exifB64`。
@@ -110,16 +110,16 @@ e2.tobytes() 长度: 262
 ### 四、`tiler_gui.py`：把"同场同光"的判断依据摆出来
 
 1. **照片列表加「拍摄」列**
-   [tiler_gui.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py#L274-L279) 现在是 `#0 文件(186) + size(86)`。
+   [tiler_gui.py](../tiler_gui.py#L274-L279) 现在是 `#0 文件(186) + size(86)`。
    改为 `#0 文件(150) + size(80) + time(96)`，时间显示 `MM-DD HH:MM`。
-   左列宽度 330 → 372（同步改 [L253](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py#L252-L255) 的 `minsize` 和 [main()](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py#L1129-L1131) 里的窗口宽度计算，避免按文档 §6.2 的老坑把右列挤出去）。
+   左列宽度 330 → 372（同步改 [L253](../tiler_gui.py#L252-L255) 的 `minsize` 和 [main()](../tiler_gui.py#L1129-L1131) 里的窗口宽度计算，避免按文档 §6.2 的老坑把右列挤出去）。
 
 2. **「按拍摄时间排序」按钮**
-   放在照片卡片工具条（[L285-L289](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py#L285-L289)）。
+   放在照片卡片工具条（[L285-L289](../tiler_gui.py#L285-L289)）。
    重排 `self.srcs` 并刷新 Treeview。**不改变排版结果**——`pack_canvases` 自己按面积排序，列表顺序只影响人的阅读顺序。
 
 3. **画布时间跨度提示**
-   在 [render()](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py#L735-L741) 里算当前画布所有 placement 的 `shot_time` 跨度，写进 `card_canvas.set_subtitle`：
+   在 [render()](../tiler_gui.py#L735-L741) 里算当前画布所有 placement 的 `shot_time` 跨度，写进 `card_canvas.set_subtitle`：
    - 跨度 ≤ `SAME_SCENE_MAX_MINUTES`（新常量，默认 **30 分钟**）→ 正常显示
    - 超出 → 副标题变橙并追加 `⚠ 时间跨度 2 小时` 
    这样用户在第一眼就能看出"这张画布混了不同场次"，自己决定要不要拆。
@@ -136,8 +136,8 @@ e2.tobytes() 长度: 262
 | IPTC / XMP / 文件名模板 | 用户未选 |
 | ~~`row` / `col` 版式**静默重采样**（按 `min(高)` 缩放，manifest 记的 crop 尺寸 ≠ 原图尺寸，破坏 1:1 承诺）~~ | **已在后续阶段修复**：新增 `core.pack_strip`，按原始像素放置、交叉轴居中留白，切回逐像素偏差 = 0 |
 | ~~`row` / `col` 不校验单边上限（10 张 6000px 横排 = 60000px 画布照导不误）~~ | **已在后续阶段修复**：`pack_strip` 校验单边上限，超限自动拆多张画布；单张放不下抛 `ValueError` |
-| 拖拽后可超出单边上限、无撤销（[_overlap_check](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py#L886-L887)） | 与本次目标无关 |
-| `Worker._drain` 关闭后 `after()` 无 `closing` 保护（[L79](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py#L79)）会抛 `TclError` | 一行修复，但不在本次范围 |
+| 拖拽后可超出单边上限、无撤销（[_overlap_check](../tiler_gui.py#L886-L887)） | 与本次目标无关 |
+| `Worker._drain` 关闭后 `after()` 无 `closing` 保护（[L79](../tiler_gui.py#L79)）会抛 `TclError` | 一行修复，但不在本次范围 |
 | 缩略图两次全解码导致多图卡顿、`pack_canvases` 贪心阶段无时间预算 | 用户规模是"十几张以内"，当前性能够用 |
 | 会话恢复 / 手工画布 / manifest 内嵌进 TIFF | 文档 §10 待办，工作量大 |
 
@@ -189,9 +189,9 @@ python tests/_ui_shots.py
 
 | 文件 | 改动 |
 |---|---|
-| [tiler_core.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py) | EXIF 双通道提取、`SourceImage` 增字段、manifest v5、`split_canvas` 写回收口、机型识别 |
-| [tiler_gui.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py) | 照片列表加「拍摄」列、排序按钮、画布时间跨度提示 |
-| [tests/e2e_test.py](file:///d:/xsdg/像素蛋糕/拼好图/tests/e2e_test.py) | 新增第 8 节：三种输出格式的 EXIF 往返 |
-| [README.md](file:///d:/xsdg/像素蛋糕/拼好图/README.md) / [docs/开发文档.md](file:///d:/xsdg/像素蛋糕/拼好图/docs/开发文档.md) | 补充 manifest v5 的 `exifB64` 字段说明与兼容策略 |
+| [tiler_core.py](../tiler_core.py) | EXIF 双通道提取、`SourceImage` 增字段、manifest v5、`split_canvas` 写回收口、机型识别 |
+| [tiler_gui.py](../tiler_gui.py) | 照片列表加「拍摄」列、排序按钮、画布时间跨度提示 |
+| [tests/e2e_test.py](../tests/e2e_test.py) | 新增第 8 节：三种输出格式的 EXIF 往返 |
+| [README.md](../README.md) / [docs/开发文档.md](../docs/开发文档.md) | 补充 manifest v5 的 `exifB64` 字段说明与兼容策略 |
 
 > `tiler_ui.py` 不改动；现有 `Card` / `Field` / `ScrollArea` 组件直接复用。
