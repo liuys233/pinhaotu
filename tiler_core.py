@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-PixCake Tiler for Windows — 核心引擎  v2
+拼好图（pinhaotu） for Windows — 核心引擎  v2
 =========================================
 针对「像素蛋糕适配」+「真实相机尺寸适配」重写：
 
@@ -34,7 +34,7 @@ from PIL import Image, ImageOps, TiffImagePlugin
 
 Image.MAX_IMAGE_PIXELS = None
 
-APP_SIGNATURE = "pixcake-tiler-win"
+APP_SIGNATURE = "pinhaotu"
 MANIFEST_VERSION = 5      # v4 -> v5：item 增加 shotTime / model / exifB64 / exifKind
 
 # ==========================================================================
@@ -46,6 +46,11 @@ MANIFEST_VERSION = 5      # v4 -> v5：item 增加 shotTime / model / exifB64 / 
 PIXCAKE_HARD_LIMIT = 13000
 # 推荐值：与官方素材链路的 12000 门一致，留 1000px 余量给保护带与多张图的零头。
 PIXCAKE_SAFE_LIMIT = 12000
+# 导入下限：同一条校验文案「暂时只支持导入长宽在100~13000像素区间的图片」，
+# 单边 <100px 同样会被硬拒。画布过小通常是因为塞了极小尺寸的照片。
+PIXCAKE_MIN_SIDE = 100
+# 画布文件大小上限：拖入画布/图层面板限 1GB，超了拒绝导入。
+PIXCAKE_MAX_FILE_BYTES = 1 << 30
 # GPU 纹理上限（glGetIntegerv(GL_MAX_TEXTURE_SIZE)，随显卡变）。超过只是被静默降分辨率，
 # 不是导入门槛 —— 不要拿它当上限用，否则排出来的画布会在导入时整批失败。
 PIXCAKE_TEXTURE_LIMIT = 16384
@@ -133,8 +138,9 @@ def capacity_report(w: int, h: int, max_side: int = PIXCAKE_SAFE_LIMIT,
     bw_p, bh_p = short_ + 2 * g, long_ + 2 * g     # 竖放：块宽用短边
 
     def axis(block_w, block_h):
+        # 块 + 间隙沿单边铺满即可：画布尺寸 = 最后一块的右/下边界，不再额外留 gutter
         cols = max(0, int((max_side + gap) // (block_w + gap)))
-        rows = max(0, int((max_side + gap - g) // (block_h + gap)))
+        rows = max(0, int((max_side + gap) // (block_h + gap)))
         return cols, rows, cols * rows
 
     lc, lr, land = axis(bw_l, bh_l)
@@ -659,17 +665,19 @@ def _valid(sizes, pos, gutter) -> bool:
 
 
 def _shelf(sizes, max_side, gap, order, gutter):
+    """货架式：从左到右填一行，满了换行。坐标系里 (x,y) 是**块**左上角（含保护带），
+    内容贴在块内 +gutter 处，因此块占满 max_side 就正好用满画布，不会白丢一条保护带。"""
     pos = {}
-    x = y = gutter
+    x = y = 0
     row_h = 0
     for i in order:
         _, w, h = sizes[i]
         ww, hh = w + 2 * gutter, h + 2 * gutter
-        if x + ww + gutter > max_side:
-            x = gutter
+        if x + ww > max_side:
+            x = 0
             y += row_h + gap
             row_h = 0
-        if y + hh + gutter > max_side:
+        if y + hh > max_side:
             return None
         pos[sizes[i][0]] = (x + gutter, y + gutter)
         x += ww + gap
@@ -681,16 +689,26 @@ def _maxrects(sizes, max_side, gap, order, gutter):
     free = [(0, 0, max_side, max_side)]
     placed = {}
 
-    def split(free, pw, ph):
+    def split(free, target, pw, ph):
+        """只切**真正被占用**的那块空闲区，且切成两块互不重叠的矩形。
+
+        原实现会对所有放得下的空闲区各切一刀（等于假设每块都被占用），
+        并在右下角产生互相重叠的空闲区 —— 会让后续放置撞车、候选被 _valid 丢掉。
+        """
         out = []
-        for (fx, fy, fw, fh) in free:
-            if pw + fx <= fx + fw and ph + fy <= fy + fh:
-                if pw + fx < fx + fw:
-                    out.append((pw + fx, fy, fx + fw - (pw + fx), fh))
-                if ph + fy < fy + fh:
-                    out.append((fx, ph + fy, fw, fy + fh - (ph + fy)))
+        for f in free:
+            if f != target:
+                out.append(f)
+                continue
+            fx, fy, fw, fh = f
+            lw, lh = fw - pw, fh - ph
+            # 选剩余面积更大的一侧做整条切割，避免出现重叠的空闲矩形
+            if lw > lh:
+                out.append((fx + pw, fy, lw, fh))
+                out.append((fx, fy + ph, pw, lh))
             else:
-                out.append((fx, fy, fw, fh))
+                out.append((fx + pw, fy, lw, ph))
+                out.append((fx, fy + ph, fw, lh))
         pruned = []
         for i, a in enumerate(out):
             if any(i != j and b[0] <= a[0] and b[1] <= a[1]
@@ -715,7 +733,7 @@ def _maxrects(sizes, max_side, gap, order, gutter):
             return None
         fx, fy, fw, fh = best
         placed[idx] = (fx + gutter, fy + gutter)
-        free = split(free, ww, hh)
+        free = split(free, best, ww, hh)
     return [placed[s[0]] for s in sizes]
 
 
@@ -1125,6 +1143,12 @@ def pack_canvases(srcs, max_side, gap=0, gutter=PIXCAKE_RECOMMENDED_GUTTER,
     for k, p in enumerate(best):
         p.index = k
         p.placements.sort(key=lambda x: (x.y, x.x))
+        if min(p.width, p.height) < PIXCAKE_MIN_SIDE:
+            raise ValueError(
+                "画布 %d×%d 小于像素蛋糕导入下限 %dpx（长宽需 %d~%d）。"
+                "一般是混进了极小的照片，请移除后重排。"
+                % (p.width, p.height, PIXCAKE_MIN_SIDE,
+                   PIXCAKE_MIN_SIDE, max_side))
     return best
 
 
@@ -1137,6 +1161,9 @@ def verify_plan(plan, srcs, max_side, gutter) -> List[str]:
     errs = []
     if plan.width > max_side or plan.height > max_side:
         errs.append("画布 %d×%d 超过单边上限 %d" % (plan.width, plan.height, max_side))
+    if min(plan.width, plan.height) < PIXCAKE_MIN_SIDE:
+        errs.append("画布 %d×%d 低于导入下限 %d"
+                    % (plan.width, plan.height, PIXCAKE_MIN_SIDE))
     n = len(plan.placements)
     for i in range(n):
         a = plan.placements[i]
@@ -1186,28 +1213,23 @@ def _strip_plan(items, gutter, gap) -> CanvasPlan:
 
 
 def pack_strip(srcs, max_side, axis="row", gap=0,
-               gutter=PIXCAKE_RECOMMENDED_GUTTER, allow_rotate=False,
+               gutter=PIXCAKE_RECOMMENDED_GUTTER,
                progress: Optional[Callable] = None) -> List[CanvasPlan]:
     """row / col 版式：按原始像素一字排开，保证 1:1 无损切回。
 
     与 pack_canvases 的唯一差别是**不重采样**：
-      - 每张图保持 natural 像素尺寸（旋转后），交叉轴居中，画布多余部分填背景色。
+      - 每张图保持 natural 像素尺寸，交叉轴居中，画布多余部分填背景色。
         同尺寸时结果与「等比缩放」版完全一致；混排时不缩放，切回就是原像素。
       - 沿排列方向贪心装满，一张画布放不下就自动开新画布（每个仍是一行 / 一列）。
-    默认不旋转（人脸朝上）；allow_rotate=True 时把横图转竖，排列方向变短、一排塞更多。
+    **不做 90° 旋转**：row/col 里「转一张」等于让那张人脸侧躺，与修人像冲突；
+    想靠旋转提密度请用 grid 版式。
     """
     if not srcs:
         return []
     horiz = (axis == "row")
     # main = 排列方向的像素长度；cross = 交叉轴像素长度
-    dims, rots = [], []
-    for s in srcs:
-        w, h = s.natural_w, s.natural_h
-        rot = 0
-        if allow_rotate and w > h:
-            w, h, rot = h, w, 90
-        dims.append((w, h) if horiz else (h, w))
-        rots.append(rot)
+    dims = [(s.natural_w, s.natural_h) if horiz else (s.natural_h, s.natural_w)
+            for s in srcs]
     band = max(c[1] for c in dims)
     if band + 2 * gutter > max_side:
         raise ValueError(
@@ -1227,7 +1249,7 @@ def pack_strip(srcs, max_side, axis="row", gap=0,
                 "「%s」按 %s 版式单边需要 %dpx，超过画布上限 %dpx，"
                 "请调高「画布单边上限」或改用 grid 版式。"
                 % (src.name, axis, cursor + main + gutter, max_side))
-        cur.append((k, main, cross, horiz, rots[k]))
+        cur.append((k, main, cross, horiz, 0))
         cursor += main + 2 * gutter + gap
         if progress:
             progress(k + 1, len(srcs), src.name)
@@ -1235,6 +1257,12 @@ def pack_strip(srcs, max_side, axis="row", gap=0,
         plans.append(_strip_plan(cur, gutter, gap))
     for i, p in enumerate(plans):
         p.index = i
+        if min(p.width, p.height) < PIXCAKE_MIN_SIDE:
+            raise ValueError(
+                "画布 %d×%d 小于像素蛋糕导入下限 %dpx（长宽需 %d~%d）。"
+                "一般是混进了极小的照片，请移除后重排。"
+                % (p.width, p.height, PIXCAKE_MIN_SIDE,
+                   PIXCAKE_MIN_SIDE, max_side))
     return plans
 
 
@@ -1275,7 +1303,11 @@ def compose_canvas(plan: CanvasPlan, srcs, out_path: str,
         if pl.rotation == 90:
             im = im.rotate(-90, expand=True)
         if im.size != (pl.w, pl.h):
-            im = im.resize((pl.w, pl.h), Image.LANCZOS)
+            # 绝不能悄悄重采样：一旦缩放，切回就不是原像素，1:1 承诺失效
+            raise ValueError(
+                "「%s」实际 %d×%d 与排版占位 %d×%d 不一致，合成会破坏 1:1 切回。"
+                "请移除后重新添加该照片。"
+                % (src.name, im.width, im.height, pl.w, pl.h))
         if im.mode != "RGB":
             im = im.convert("RGB")
 
@@ -1471,7 +1503,8 @@ def split_canvas(returned_file, manifest, out_dir, fmt="jpeg", quality=100,
             "size": f"{(h if rot == 90 else w)}×{(w if rot == 90 else h)}",
             "natural": it.get("natural"),
             "rotation": rot,
-            "lossless": rep["dimsMatch"] and rot == 0,
+            # 尺寸一致即逐像素无损；旋转 90° 用 transpose 还原，同样不重采样
+            "lossless": rep["dimsMatch"],
             "exifCopied": exif_ok,
             "exifNothingToCopy": exif_none,
         })
@@ -1497,8 +1530,11 @@ def ledger_add(ledger_path, batch) -> None:
             data = {"batches": []}
     data.setdefault("batches", []).append(batch)
     os.makedirs(os.path.dirname(os.path.abspath(ledger_path)) or ".", exist_ok=True)
-    with open(ledger_path, "w", encoding="utf-8") as f:
+    # 先写 .part 再替换：中途断电也不会把账本写成半截 JSON
+    tmp = ledger_path + ".part"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, ledger_path)
 
 
 def ledger_summary(ledger_path, price_per_shot=PRICE_PER_SHOT_DEFAULT) -> dict:
@@ -1712,6 +1748,17 @@ def self_test(verbose=True) -> int:
     except ValueError:
         pass
     log("[6b] row/col 超上限自动拆画布 + 单张拒绝校验完成")
+
+    # [6c] 导入下限 100px：极小照片会把画布拖到下限以下，必须提前报错
+    for fn, kw in ((pack_strip, {"axis": "row"}),
+                   (pack_canvases, {})):
+        try:
+            fn([SourceImage(os.path.join(tmp, "tiny.jpg"), "tiny", 40, 40)], 5000, **kw)
+            log("    !! %s 未拦截小于 100px 的画布" % fn.__name__)
+            ok = False
+        except ValueError:
+            pass
+    log("[6c] 画布低于导入下限时拒绝校验完成")
 
     # [7] 朝向与旋转：默认零旋转（人脸朝上）＝「竖屏竖着排、横屏横着排」；
     #     开旋转后画布数只应减少或不变，且所有画布仍然合法

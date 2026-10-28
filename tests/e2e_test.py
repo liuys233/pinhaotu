@@ -95,7 +95,7 @@ def main():
                         a.y + a.h <= b.y or b.y + b.h <= a.y), "出现重叠"
     assert len(plans) >= 1
 
-    export_dir = os.path.join(tmp, "像素拼图导出")
+    export_dir = os.path.join(tmp, "拼好图导出")
     os.makedirs(export_dir, exist_ok=True)
     batch = "e2e" + str(random.randrange(9999)).zfill(4)
 

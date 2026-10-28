@@ -1,5 +1,5 @@
 @echo off
-title PixCake Tiler
+title pinhaotu
 cd /d "%~dp0"
 
 set "PY="

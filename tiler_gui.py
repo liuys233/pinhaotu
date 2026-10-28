@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-像素拼图 · Windows 版  v3   ——   主程序
+拼好图（pinhaotu） · Windows 版  v3   ——   主程序
 
 界面结构：
   ┌─────────────────────────────────────────────────────────────┐
@@ -93,7 +93,7 @@ class App:
         self.worker = Worker(root)
         self.worker.app = self
 
-        root.title("像素拼图 · PixCake Tiler")
+        root.title("拼好图 · pinhaotu")
         root.geometry("1500x900")
         root.minsize(1300, 760)
         root.configure(bg=ui.C_BG)
@@ -143,7 +143,7 @@ class App:
         return os.path.expanduser("~")
 
     def _default_export(self):
-        return os.path.join(self._pictures(), "像素拼图导出")
+        return os.path.join(self._pictures(), "拼好图导出")
 
     def _ledger_path(self):
         return os.path.join(os.path.dirname(os.path.abspath(__file__)), "ledger.json")
@@ -165,7 +165,7 @@ class App:
 
         left = tk.Frame(head, bg=ui.C_BG)
         left.pack(side="left")
-        tk.Label(left, text="像素拼图", bg=ui.C_BG, fg=ui.C_TEXT,
+        tk.Label(left, text="拼好图", bg=ui.C_BG, fg=ui.C_TEXT,
                  font=ui.F_TITLE).pack(side="left")
         tk.Label(left, text="多张照片 1:1 无损拼合成一张画布 · 精修后按记录切回",
                  bg=ui.C_BG, fg=ui.C_TEXT_FAINT, font=ui.F_SMALL).pack(side="left", padx=(10, 0))
@@ -201,7 +201,7 @@ class App:
         cb.bind("<<ComboboxSelected>>", lambda e: self.update_capacity())
 
         field("单边上限 px",
-              lambda m: ttk.Spinbox(m, from_=2000, to=core.PIXCAKE_TEXTURE_LIMIT,
+              lambda m: ttk.Spinbox(m, from_=2000, to=core.PIXCAKE_HARD_LIMIT,
                                     increment=1000, textvariable=self.v_maxside,
                                     command=self.update_capacity), w=8)
         field("保护带 px",
@@ -657,10 +657,9 @@ class App:
         ori = {"P": "竖", "L": "横", "S": "方"}.get(core.orientation_of(w, h), "")
         self.badge_cam.set("相机：%s%s" % (label, "（%s）" % ori if ori else ""))
         self.lbl_cap_hint.configure(
-            text="单边 %dpx 单画布：竖 %d / 横 %d / 横竖混排 %d 张%s"
+            text="单边 %dpx 单画布：竖 %d / 横 %d / 横竖混排 %d 张"
                  % (self.v_maxside.get(), cap["portrait"]["total"],
-                    cap["landscape"]["total"], cap["mixed"],
-                    "（已开旋转，可再挤）" if self.v_rotate.get() else ""))
+                    cap["landscape"]["total"], cap["mixed"]))
 
     def _on_rotate_toggle(self):
         self.update_capacity()
@@ -678,7 +677,7 @@ class App:
             return
         mx = self.v_maxside.get()
         if mx > core.PIXCAKE_HARD_LIMIT:
-            if not messagebox.askyesno(
+            if messagebox.askyesno(
                     "超出导入硬上限",
                     "%dpx 超过像素蛋糕的导入硬上限 %dpx。\n\n"
                     "导入时会直接弹「图片尺寸过大」被拒 —— 连静默降采样都不会发生，"
@@ -686,13 +685,13 @@ class App:
                     % (mx, core.PIXCAKE_HARD_LIMIT, core.PIXCAKE_SAFE_LIMIT)):
                 self.v_maxside.set(core.PIXCAKE_SAFE_LIMIT)
                 mx = core.PIXCAKE_SAFE_LIMIT
+            else:
+                return
 
         rot = self.v_rotate.get()
         if rot:
             self.log_msg("注意：已开旋转，个别照片会被转 90°（人脸侧躺）以提升密度。")
         # 朝向交给排版器决定：默认全部保持真实朝向（人脸朝上），这里不预置任何旋转
-        for s in self.srcs:
-            s.rotation = 0
         if not rot:
             n_p = sum(1 for s in self.srcs if s.orientation == "P")
             n_l = sum(1 for s in self.srcs if s.orientation == "L")
@@ -700,6 +699,11 @@ class App:
                          "不旋转，人脸保持朝上。" % (n_p, n_l))
 
         gut, gap, mode = self.v_gutter.get(), self.v_gap.get(), self.v_mode.get()
+        if gut <= 0 and not messagebox.askyesno(
+                "保护带为 0",
+                "保护带 0 意味着接缝两侧没有自身镜像，像素蛋糕里的液化会直接拉扯到相邻照片，"
+                "跨缝就无法保证还原。\n\n确定要用 0px 继续排版？"):
+            return
         self.status.set("正在排版…")
         self._set_busy(True)
         self.set_progress(0, 1, "搜索最优排版")
@@ -707,7 +711,7 @@ class App:
         def job(prog):
             if mode in ("row", "col"):
                 return core.pack_strip(self.srcs, mx, axis=mode, gap=gap,
-                                       gutter=gut, allow_rotate=rot, progress=prog)
+                                       gutter=gut, progress=prog)
             return core.pack_canvases(self.srcs, mx, gap=gap, gutter=gut,
                                       allow_rotate=rot, progress=prog)
 
@@ -894,8 +898,12 @@ class App:
         plan, s, ox, oy = self._pv
         k, dx, dy = self.drag
         pl = plan.placements[k]
-        pl.x = int(max(0, min(plan.width - pl.w, (e.x - ox) / s - dx)))
-        pl.y = int(max(0, min(plan.height - pl.h, (e.y - oy) / s - dy)))
+        # 贴边也要留住保护带，否则镜像条会被裁掉、跨缝保护失效
+        g = self.v_gutter.get()
+        mx = max(g, plan.width - pl.w - g)
+        my = max(g, plan.height - pl.h - g)
+        pl.x = int(max(g, min(mx, (e.x - ox) / s - dx)))
+        pl.y = int(max(g, min(my, (e.y - oy) / s - dy)))
         self._overlap_check()
 
     def on_drag_end(self, e):
@@ -944,7 +952,8 @@ class App:
         batch = self.batch
         gut, gap = self.v_gutter.get(), self.v_gap.get()
         mx = self.v_maxside.get()
-        rot = self.v_rotate.get()
+        # manifest 记的是这批**实际**有没有照片被转过，而不是开关状态
+        rot = any(p.rotation == 90 for pl in plans for p in pl.placements)
         cam = "" if self.v_camera.get() == "自动识别" else self.v_camera.get()
         total = len(plans)
         self.status.set("正在导出…")
@@ -957,6 +966,12 @@ class App:
                 if not s.sha256:
                     s.sha256 = core.sha256_file(s.path)
                 prog(i + 1, len(srcs) + total, "校验 %d/%d" % (i + 1, len(srcs)))
+            # 导出前做纯数学校验：拖拽后若有越界/保护带相交，宁可拦住也不要写出坏画布
+            for plan in plans:
+                errs = core.verify_plan(plan, srcs, mx, gut)
+                if errs:
+                    raise ValueError("画布 %d 校验未通过：%s（请重新拖拽或重新排版）"
+                                     % (plan.index + 1, "；".join(errs[:3])))
             outs = []
             for k, plan in enumerate(plans):
                 out = os.path.join(parent, "TILE_%s_c%02d.tif" % (batch, plan.index + 1))
@@ -979,6 +994,11 @@ class App:
                 self.log_msg("✔ %s  %s  %d 张"
                              % (os.path.basename(out),
                                 core.human_size(os.path.getsize(out)), n))
+            overs = [o for o, _, _ in outs
+                     if os.path.getsize(o) > core.PIXCAKE_MAX_FILE_BYTES]
+            if overs:
+                self.log_msg("⚠ 有 %d 张画布超过 1GB，像素蛋糕会拒绝导入：%s"
+                             % (len(overs), "、".join(os.path.basename(o) for o in overs)))
             self.log_msg("目录：%s" % parent)
             saved = max(0, len(srcs) - len(plans))
             core.ledger_add(self._ledger_path(), {
