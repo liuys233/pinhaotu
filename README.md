@@ -159,12 +159,12 @@ python tests/_ui_shots.py       # UI 冒烟 + 截图（存到 tests/_shots/）
 
 ```
 拼好图/
+├── README.md                         用户手册（本文件）
 ├── 启动.bat                          双击启动
 ├── tiler_core.py                     引擎（排版 / 合成 / 切分 / EXIF / manifest / 账本）
 ├── tiler_ui.py                       界面组件层（设计令牌、Card、StepButton、Badge…）
 ├── tiler_gui.py                      Tkinter 主程序
 ├── docs/
-│   ├── README.md                     用户手册（本文件）
 │   ├── 开发文档.md                    内部设计说明
 │   └── EXIF全链路与同场同光优化.md     设计决策存档
 └── tests/

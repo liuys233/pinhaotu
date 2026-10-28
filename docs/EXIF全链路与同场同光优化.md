@@ -192,6 +192,6 @@ python tests/_ui_shots.py
 | [tiler_core.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_core.py) | EXIF 双通道提取、`SourceImage` 增字段、manifest v5、`split_canvas` 写回收口、机型识别 |
 | [tiler_gui.py](file:///d:/xsdg/像素蛋糕/拼好图/tiler_gui.py) | 照片列表加「拍摄」列、排序按钮、画布时间跨度提示 |
 | [tests/e2e_test.py](file:///d:/xsdg/像素蛋糕/拼好图/tests/e2e_test.py) | 新增第 8 节：三种输出格式的 EXIF 往返 |
-| [docs/README.md](file:///d:/xsdg/像素蛋糕/拼好图/docs/README.md) / [docs/开发文档.md](file:///d:/xsdg/像素蛋糕/拼好图/docs/开发文档.md) | 补充 manifest v5 的 `exifB64` 字段说明与兼容策略 |
+| [README.md](file:///d:/xsdg/像素蛋糕/拼好图/README.md) / [docs/开发文档.md](file:///d:/xsdg/像素蛋糕/拼好图/docs/开发文档.md) | 补充 manifest v5 的 `exifB64` 字段说明与兼容策略 |
 
 > `tiler_ui.py` 不改动；现有 `Card` / `Field` / `ScrollArea` 组件直接复用。
